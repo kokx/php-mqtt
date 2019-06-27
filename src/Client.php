@@ -12,8 +12,20 @@ class Client
 
     const TYPE_CONNECT = 0x10;
     const TYPE_CONNACK = 0x20;
+    const TYPE_PUBLISH = 0x30;
+    const TYPE_PUBACK = 0x40;
+    const TYPE_PUBREC = 0x50;
+    const TYPE_PUBREL = 0x60;
+    const TYPE_PUBCOMP = 0x70;
+    const TYPE_SUBSCRIBE = 0x80;
+    const TYPE_SUBACK = 0x90;
+    const TYPE_UNSUBSCRIBE = 0xA0;
+    const TYPE_UNSUBACK = 0xB0;
     const TYPE_PINGREQ = 0xC0;
     const TYPE_PINGRESP = 0xD0;
+    const TYPE_DISCONNECT = 0xE0;
+
+    const FLAG_SUBSCRIBE = 0x02;
 
     /**
      * @var resource
@@ -64,6 +76,7 @@ class Client
         if (time() > $this->lastControlMessage + $this->keepalive) {
             // send a ping request
             $this->pingreq();
+            // TODO: verify if the pingresp is received
         }
         $this->read();
     }
@@ -101,6 +114,10 @@ class Client
 
         $data = stream_get_contents($this->socket, $len);
 
+        // only get the type, don't care about flags (for now)
+        $flags = $type & 0x0F;
+        $type = $type & 0xF0;
+
         switch ($type) {
             case self::TYPE_CONNACK:
                 echo "CONNACK\n";
@@ -111,10 +128,64 @@ class Client
             case self::TYPE_PINGRESP:
                 echo "PINGRESP\n";
                 break;
+            case self::TYPE_SUBACK:
+                echo "SUBACK\n";
+                var_dump($data);
+                break;
+            case self::TYPE_PUBLISH:
+                echo "PUBLISH\n";
+                $this->recvPublish($flags, $data);
+                break;
             default:
                 echo "Don't know: " . $type . "\n";
                 break;
         }
+    }
+
+    /**
+     * Receive a publish message.
+     * @param int $flags
+     * @param string $data
+     */
+    public function recvPublish(int $flags, string $data)
+    {
+        $topiclen = unpack('n', $data)[1];
+        $topic = substr($data, 2, $topiclen);
+        $bytesread = $topiclen + 2;
+
+        // there only is an identifier when qos != 0
+        if ($flags & 0x06 != 0) {
+            $identifier = unpack('n', $data, $bytesread);
+            $bytesread += 2;
+        }
+
+        $payload = substr($data, $bytesread);
+
+        // TODO: implement qos
+
+        // TODO: route to correct callback
+
+        var_dump($topic, $payload);
+    }
+
+    /**
+     * Subscribe to a topic.
+     * @param string $topic
+     */
+    public function subscribe(string $topic)
+    {
+        $identifier = mt_rand(0, 0xFFFF);
+        // TODO: store the identifier somehow
+
+        $header = pack('n', $identifier);
+
+        echo "SUB IDENT: " . $identifier . "\n";
+
+        // TODO: allow other QoS than 0
+        $qos = 0;
+        $payload = pack('n', strlen($topic)) . $topic . pack('c', $qos);
+
+        $this->send(self::TYPE_SUBSCRIBE | self::FLAG_SUBSCRIBE, $header, $payload);
     }
 
     /**
