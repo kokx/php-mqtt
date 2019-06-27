@@ -12,11 +12,29 @@ class Client
 
     const TYPE_CONNECT = 0x10;
     const TYPE_CONNACK = 0x20;
+    const TYPE_PINGREQ = 0xC0;
+    const TYPE_PINGRESP = 0xD0;
 
     /**
      * @var resource
      */
     protected $socket;
+
+    /**
+     * @var array
+     */
+    protected $options;
+
+    /**
+     * @var int
+     */
+    protected $keepalive = 32;
+
+    /**
+     * Last time a control message was sent
+     * @var int
+     */
+    protected $lastControlMessage;
 
     /**
      * Constructor.
@@ -28,16 +46,26 @@ class Client
         if (!isset($options['port'])) {
             $options['port'] = self::DEFAULT_PORT;
         }
-
-        $this->socket = fsockopen($options['hostname'], $options['port']);
-        // make sure the stream is not blocking, so we don't have to wait for data
-        stream_set_blocking($this->socket, false);
-
-        $this->connect();
-
-        while (true) {
-            $this->read();
+        if (isset($options['keepalive'])) {
+            $keepalive = (int) $options['keepalive'];
+            // ensure keepalive is at least 0 and at most 0xFFFF
+            $keepalive = max(0, $keepalive);
+            $this->keepalive = min(0xFFFF, $keepalive);
         }
+
+        $this->options = $options;
+    }
+
+    /**
+     * Loop.
+     */
+    public function loop()
+    {
+        if (time() > $this->lastControlMessage + $this->keepalive) {
+            // send a ping request
+            $this->pingreq();
+        }
+        $this->read();
     }
 
     /**
@@ -45,6 +73,10 @@ class Client
      */
     public function read()
     {
+        if (feof($this->socket)) {
+            echo "Stream ended. Reconnecting...";
+            $this->connect();
+        }
         // try to read 1 byte from the socket
         $type = stream_get_contents($this->socket, 1);
 
@@ -53,16 +85,13 @@ class Client
             return NULL;
         }
 
-        $bytesRead = 1;
-
-        $type = unpack('c', $type)[1];
+        $type = unpack('C', $type)[1];
 
         // got a packet, read length
         $multiplier = 1;
         $len = 0;
         do {
-            $encodedByte = unpack('c', stream_get_contents($this->socket, 1))[1];
-            $bytesRead++;
+            $encodedByte = unpack('C', stream_get_contents($this->socket, 1))[1];
             $len += ($encodedByte & 0x7F) * $multiplier;
             $multiplier *= 0x80;
             if ($multiplier > 0x80*0x80*0x80) {
@@ -70,33 +99,55 @@ class Client
             }
         } while (($encodedByte & 0x80) != 0);
 
-        if ($len > $bytesRead) {
-            echo "Still need to read some.\n";
-        }
+        $data = stream_get_contents($this->socket, $len);
 
-        if ($type === self::TYPE_CONNACK) {
-            echo "CONNACK\n";
+        switch ($type) {
+            case self::TYPE_CONNACK:
+                echo "CONNACK\n";
+                break;
+            case self::TYPE_PINGREQ:
+                echo "PINGREQ\n";
+                break;
+            case self::TYPE_PINGRESP:
+                echo "PINGRESP\n";
+                break;
+            default:
+                echo "Don't know: " . $type . "\n";
+                break;
         }
+    }
+
+    /**
+     * Send a ping request.
+     */
+    protected function pingreq()
+    {
+        $this->send(self::TYPE_PINGREQ, "", "");
+        $this->lastControlMessage = time();
     }
 
     /**
      * Connect.
      */
-    protected function connect()
+    public function connect()
     {
+        $this->socket = fsockopen($this->options['hostname'], $this->options['port']);
+        // make sure the stream is not blocking, so we don't have to wait for data
+        stream_set_blocking($this->socket, false);
+
         $protocol = 'MQTT';
         $ident = "TestIdent";
 
         // variable headers
 
-        // protocol length is encoded here
+        // protocol name length + protocol
         $headers = pack("n", strlen($protocol)) . $protocol;
         // protocol level = 4
         $headers .= pack('c', 0x04);
         // connect flags (TODO: other than just clean session)
         $headers .= pack('c', 0x02);
-        // keepalive (short, 10)
-        $headers .= pack('c2', 0x00, 0x0A);
+        // keepalive
+        $headers .= pack('n', $this->keepalive);
 
         // payload
 
@@ -104,6 +155,7 @@ class Client
         $payload = pack("n", strlen($ident)) . $ident;
 
         $this->send(self::TYPE_CONNECT, $headers, $payload);
+        $this->lastControlMessage = time();
     }
 
     /**
