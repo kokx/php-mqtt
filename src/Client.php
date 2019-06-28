@@ -49,12 +49,21 @@ class Client
     protected $lastControlMessage;
 
     /**
+     * Topic subscriptions.
+     * @var array
+     */
+    protected $subscriptions = [];
+
+    /**
      * Constructor.
      *
      * @param array $options
      */
     public function __construct(array $options)
     {
+        if (!isset($options['hostname'])) {
+            throw new \InvalidArgumentException("No hostname for connection given.");
+        }
         if (!isset($options['port'])) {
             $options['port'] = self::DEFAULT_PORT;
         }
@@ -164,15 +173,34 @@ class Client
         // TODO: implement qos
 
         // TODO: route to correct callback
+        foreach ($this->subscriptions as $ident => $subscription) {
+            if ($this->topicMatches($topic, $subscription['topic'])) {
+                $subscription['callback']($topic, $payload);
+            }
+        }
+    }
 
-        var_dump($topic, $payload);
+    /**
+     * Check if a topic matches a topic spec
+     * @param string $topic
+     * @param string $spec
+     */
+    protected function topicMatches(string $topic, string $spec)
+    {
+        $spec = str_replace('+', '[^/]+', $spec);
+        $spec = str_replace('#', '.*', $spec);
+        $spec = str_replace('/', '\\/', $spec);
+        $spec = '/^' . $spec . '$/';
+
+        return preg_match($spec, $topic);
     }
 
     /**
      * Subscribe to a topic.
      * @param string $topic
+     * @param callable $callback To be called when a message for the topic comes in.
      */
-    public function subscribe(string $topic)
+    public function subscribe(string $topic, callable $callback)
     {
         $identifier = mt_rand(0, 0xFFFF);
         // TODO: store the identifier somehow
@@ -186,6 +214,10 @@ class Client
         $payload = pack('n', strlen($topic)) . $topic . pack('c', $qos);
 
         $this->send(self::TYPE_SUBSCRIBE | self::FLAG_SUBSCRIBE, $header, $payload);
+        $this->subscriptions[$identifier] = [
+            'topic'    => $topic,
+            'callback' => $callback
+        ];
     }
 
     /**
