@@ -139,7 +139,7 @@ class Client
                 break;
             case self::TYPE_SUBACK:
                 echo "SUBACK\n";
-                var_dump($data);
+                var_dump(unpack('nident/cqos', $data));
                 break;
             case self::TYPE_PUBLISH:
                 echo "PUBLISH\n";
@@ -158,14 +158,22 @@ class Client
      */
     public function recvPublish(int $flags, string $data)
     {
+        $qos = ($flags & 0x06) >> 1;
         $topiclen = unpack('n', $data)[1];
         $topic = substr($data, 2, $topiclen);
         $bytesread = $topiclen + 2;
 
         // there only is an identifier when qos != 0
-        if ($flags & 0x06 != 0) {
+        if ($qos != 0) {
             $identifier = unpack('n', $data, $bytesread);
             $bytesread += 2;
+
+            if ($qos == 1) {
+                // TODO: send PUBACK
+            }
+            if ($qos == 2) {
+                // TODO: send PUBREC
+            }
         }
 
         $payload = substr($data, $bytesread);
@@ -199,9 +207,13 @@ class Client
      * Subscribe to a topic.
      * @param string $topic
      * @param callable $callback To be called when a message for the topic comes in.
+     * @param int $qos
      */
-    public function subscribe(string $topic, callable $callback)
+    public function subscribe(string $topic, callable $callback, int $qos = 0)
     {
+        if ($qos < 0 || $qos > 2) {
+            throw new \InvalidArgumentException("Invalid QoS given, must be between 0 and 2 (inclusive).");
+        }
         $identifier = mt_rand(0, 0xFFFF);
         // TODO: store the identifier somehow
 
@@ -210,7 +222,6 @@ class Client
         echo "SUB IDENT: " . $identifier . "\n";
 
         // TODO: allow other QoS than 0
-        $qos = 0;
         $payload = pack('n', strlen($topic)) . $topic . pack('c', $qos);
 
         $this->send(self::TYPE_SUBSCRIBE | self::FLAG_SUBSCRIBE, $header, $payload);
