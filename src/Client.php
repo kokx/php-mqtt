@@ -9,6 +9,7 @@ class Client
 {
 
     const DEFAULT_PORT = 1883;
+    const RETRANSMIT_TIME = 32;
 
     const TYPE_CONNECT = 0x10;
     const TYPE_CONNACK = 0x20;
@@ -26,6 +27,9 @@ class Client
     const TYPE_DISCONNECT = 0xE0;
 
     const FLAG_SUBSCRIBE = 0x02;
+
+    const PUB_STATE_PUBLISHED = 0;
+    const PUB_STATE_PUBREL = 1;
 
     /**
      * @var resource
@@ -61,6 +65,12 @@ class Client
     protected $recvPublishState = [];
 
     /**
+     * State of published messages.
+     * @var array
+     */
+    protected $publishState = [];
+
+    /**
      * Constructor.
      *
      * @param array $options
@@ -87,21 +97,25 @@ class Client
     }
 
     /**
-     * Loop.
+     * Read an incoming message and send a ping if needed.
+     *
+     * This function will also check if messages need to be retransmitted.
+     *
+     * To prevent accidental disconnects, run this function at least every 1/3*keepalive seconds.
      */
     public function loop()
     {
+        $this->read();
         if (time() > $this->lastControlMessage + $this->keepalive) {
             // send a ping request
             $this->pingreq();
         }
-        $this->read();
     }
 
     /**
      * Read.
      */
-    public function read()
+    protected function read()
     {
         if (feof($this->socket)) {
             echo "Stream ended. Reconnecting...";
@@ -212,7 +226,7 @@ class Client
                 // second receive, make sure we do not execute twice
                 return;
             }
-            $this->recvPublishState[$identifier] = true;
+            $this->recvPublishState[$identifier] = time();
         }
 
         $payload = substr($data, $bytesread);
@@ -284,6 +298,15 @@ class Client
         if ($qos > 0) {
             $identifier = mt_rand(0, 0xFFFF);
             $headers .= $identifier;
+
+            $this->publishState[$identifier] = [
+                'topic' => $topic,
+                'payload' => $payload,
+                'qos' => $qos,
+                'retain' => $retain,
+                'state' => self::PUB_STATE_PUBLISHED,
+                'last_change' => time()
+            ];
         }
 
         $this->send(self::TYPE_PUBLISH | $flags, $headers, $payload);
