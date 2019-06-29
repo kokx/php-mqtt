@@ -67,6 +67,9 @@ class Client
         if (!isset($options['port'])) {
             $options['port'] = self::DEFAULT_PORT;
         }
+        if (!isset($options['ident'])) {
+            $options['ident'] = 'php-mqtt';
+        }
         if (isset($options['keepalive'])) {
             $keepalive = (int) $options['keepalive'];
             // ensure keepalive is at least 0 and at most 0xFFFF
@@ -163,7 +166,7 @@ class Client
     public function recvPubrel(int $flags, string $data)
     {
         if ($flags !== 0x02) {
-            // TODO: maybe handle this more graceful
+            // TODO: maybe handle this more gracefully
             throw new \RuntimeException("The broker sent an invalid PUBREL.");
         }
 
@@ -236,7 +239,7 @@ class Client
      * Subscribe to a topic.
      * @param string $topic
      * @param callable $callback To be called when a message for the topic comes in.
-     * @param int $qos
+     * @param int $qos Maximum QoS to be sent
      */
     public function subscribe(string $topic, callable $callback, int $qos = 0)
     {
@@ -247,10 +250,6 @@ class Client
         // TODO: store the identifier somehow
 
         $header = pack('n', $identifier);
-
-        echo "SUB IDENT: " . $identifier . "\n";
-
-        // TODO: allow other QoS than 0
         $payload = pack('n', strlen($topic)) . $topic . pack('c', $qos);
 
         $this->send(self::TYPE_SUBSCRIBE | self::FLAG_SUBSCRIBE, $header, $payload);
@@ -265,8 +264,7 @@ class Client
      */
     protected function pingreq()
     {
-        $this->send(self::TYPE_PINGREQ, "", "");
-        $this->lastControlMessage = time();
+        $this->send(self::TYPE_PINGREQ, '', '');
     }
 
     /**
@@ -275,20 +273,33 @@ class Client
     public function connect()
     {
         $this->socket = fsockopen($this->options['hostname'], $this->options['port']);
-        // make sure the stream is not blocking, so we don't have to wait for data
+        // make sure the stream is not blocking
         stream_set_blocking($this->socket, false);
 
         $protocol = 'MQTT';
-        $ident = "TestIdent";
+        $ident = $this->options['ident'];
+
+        // find out which connect flags need to be set
+        $flags = 0;
+        if (isset($this->options['clean_session']) && $this->options['clean_session']) {
+            $flags |= 0x02;
+        }
+        // TODO: implement will
+        if (isset($this->options['username'])) {
+            $flags |= 0x80;
+        }
+        if (isset($this->options['password'])) {
+            $flags |= 0x40;
+        }
 
         // variable headers
 
         // protocol name length + protocol
         $headers = pack("n", strlen($protocol)) . $protocol;
-        // protocol level = 4
+        // protocol level = 4 (version 3.1.1)
         $headers .= pack('c', 0x04);
         // connect flags (TODO: other than just clean session)
-        $headers .= pack('c', 0x02);
+        $headers .= pack('c', $flags);
         // keepalive
         $headers .= pack('n', $this->keepalive);
 
@@ -297,8 +308,16 @@ class Client
         // identifier
         $payload = pack("n", strlen($ident)) . $ident;
 
+        // TODO: if will = 1, include will topic and contents
+
+        if (isset($this->options['username'])) {
+            $payload .= pack('n', strlen($this->options['username'])) . $this->options['username'];
+        }
+        if (isset($this->options['password'])) {
+            $payload .= pack('n', strlen($this->options['password'])) . $this->options['password'];
+        }
+
         $this->send(self::TYPE_CONNECT, $headers, $payload);
-        $this->lastControlMessage = time();
     }
 
     /**
@@ -321,5 +340,6 @@ class Client
         $msg = pack('cc', $type, $len) . $headers . $payload;
 
         fwrite($this->socket, $msg);
+        $this->lastControlMessage = time();
     }
 }
