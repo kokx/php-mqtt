@@ -55,6 +55,12 @@ class Client
     protected $subscriptions = [];
 
     /**
+     * State of received publish messages.
+     * @var array
+     */
+    protected $recvPublishState = [];
+
+    /**
      * Constructor.
      *
      * @param array $options
@@ -88,7 +94,6 @@ class Client
         if (time() > $this->lastControlMessage + $this->keepalive) {
             // send a ping request
             $this->pingreq();
-            // TODO: verify if the pingresp is received
         }
         $this->read();
     }
@@ -170,11 +175,11 @@ class Client
             throw new \RuntimeException("The broker sent an invalid PUBREL.");
         }
 
-        $identifier = unpack('n', $data);
-
-        // TODO: actually release the identifier locally
+        $identifier = unpack('n', $data)[1];
 
         $this->send(self::TYPE_PUBCOMP, pack('n', $identifier), '');
+        // release the identifier locally
+        unset($this->recvPublishState[$identifier]);
         echo "PUBCOMP sent\n";
     }
 
@@ -194,25 +199,25 @@ class Client
         if ($qos != 0) {
             $identifier = unpack('n', $data, $bytesread)[1];
             $bytesread += 2;
+        }
 
-            var_dump($qos);
-            if ($qos == 1) {
-                echo "PUBACK sent\n";
-                $this->send(self::TYPE_PUBACK, pack('n', $identifier), '');
+        if ($qos == 1) {
+            echo "PUBACK sent\n";
+            $this->send(self::TYPE_PUBACK, pack('n', $identifier), '');
+        }
+        if ($qos == 2) {
+            echo "PUBREC sent\n";
+            $this->send(self::TYPE_PUBREC, pack('n', $identifier), '');
+            if (isset($this->recvPublishState[$identifier])) {
+                // second receive, make sure we do not execute twice
+                return;
             }
-            if ($qos == 2) {
-                echo "PUBREC sent\n";
-                $this->send(self::TYPE_PUBREC, pack('n', $identifier), '');
-                // TODO: verify if this is the second time the PUBLISH packet
-                // has been sent, and make sure we don't execute twice
-            }
+            $this->recvPublishState[$identifier] = true;
         }
 
         $payload = substr($data, $bytesread);
 
-        // TODO: implement qos
-
-        // TODO: route to correct callback
+        // trigger callback for this message
         foreach ($this->subscriptions as $ident => $subscription) {
             if ($this->topicMatches($topic, $subscription['topic'])) {
                 $subscription['callback']($topic, $payload);
