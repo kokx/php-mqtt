@@ -145,10 +145,34 @@ class Client
                 echo "PUBLISH\n";
                 $this->recvPublish($flags, $data);
                 break;
+            case self::TYPE_PUBREL:
+                echo "PUBREL\n";
+                $this->recvPubrel($flags, $data);
+                break;
             default:
                 echo "Don't know: " . $type . "\n";
                 break;
         }
+    }
+
+    /**
+     * Receive a pubrel message.
+     * @param int $flags
+     * @param string $data
+     */
+    public function recvPubrel(int $flags, string $data)
+    {
+        if ($flags !== 0x02) {
+            // TODO: maybe handle this more graceful
+            throw new \RuntimeException("The broker sent an invalid PUBREL.");
+        }
+
+        $identifier = unpack('n', $data);
+
+        // TODO: actually release the identifier locally
+
+        $this->send(self::TYPE_PUBCOMP, pack('n', $identifier), '');
+        echo "PUBCOMP sent\n";
     }
 
     /**
@@ -165,14 +189,19 @@ class Client
 
         // there only is an identifier when qos != 0
         if ($qos != 0) {
-            $identifier = unpack('n', $data, $bytesread);
+            $identifier = unpack('n', $data, $bytesread)[1];
             $bytesread += 2;
 
+            var_dump($qos);
             if ($qos == 1) {
-                // TODO: send PUBACK
+                echo "PUBACK sent\n";
+                $this->send(self::TYPE_PUBACK, pack('n', $identifier), '');
             }
             if ($qos == 2) {
-                // TODO: send PUBREC
+                echo "PUBREC sent\n";
+                $this->send(self::TYPE_PUBREC, pack('n', $identifier), '');
+                // TODO: verify if this is the second time the PUBLISH packet
+                // has been sent, and make sure we don't execute twice
             }
         }
 
