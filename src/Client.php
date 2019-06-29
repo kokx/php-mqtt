@@ -265,6 +265,31 @@ class Client
     }
 
     /**
+     * Publish a message.
+     * @param string $topic
+     * @param string $payload
+     * @param int $qos QoS for the message
+     * @param boolean $retain Should the message be retained
+     */
+    public function publish(string $topic, string $payload, int $qos = 0, bool $retain = false)
+    {
+        if ($qos < 0 || $qos > 2) {
+            throw new \InvalidArgumentException("Incorrect QoS argument given, must be 0, 1 or 2.");
+        }
+        $retain = (int) $retain;
+        $flags = ($qos << 1) | $retain;
+
+        $headers = pack('n', strlen($topic)) . $topic;
+
+        if ($qos > 0) {
+            $identifier = mt_rand(0, 0xFFFF);
+            $headers .= $identifier;
+        }
+
+        $this->send(self::TYPE_PUBLISH | $flags, $headers, $payload);
+    }
+
+    /**
      * Send a ping request.
      */
     protected function pingreq()
