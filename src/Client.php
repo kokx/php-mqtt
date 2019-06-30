@@ -65,10 +65,24 @@ class Client
     protected $recvPublishState = [];
 
     /**
-     * State of published messages.
+     * Current state of the protocol. Wiped on reconnect.
+     *
+     * Contains information about stateful parts of the protocol. Such as the
+     * state information around QoS.
+     *
+     * Every element of this array contains:
+     * - last_change, the time() of the last moment it was changed
+     * - onfail, a callback that will be called if the timeout expired,
+     *   used to retry sending most of the time
+     * - onsuccess, a callback that will be called when the message is
+     *   successfully resolved, can be null
+     * - data, all context of the state
+     *
+     * The key will always be the identifier of the message chain
+     *
      * @var array
      */
-    protected $publishState = [];
+    protected $state = [];
 
     /**
      * Constructor.
@@ -197,7 +211,7 @@ class Client
 
         $this->send(self::TYPE_PUBCOMP, pack('n', $identifier), '');
         // release the identifier locally
-        unset($this->recvPublishState[$identifier]);
+        unset($this->state[$identifier]);
         echo "PUBCOMP sent\n";
     }
 
@@ -230,7 +244,14 @@ class Client
                 // second receive, make sure we do not execute twice
                 return;
             }
-            $this->recvPublishState[$identifier] = time();
+            $this->state[$identifier] = [
+                'last_change' => time(),
+                'onfail' => null, // TODO: send next qos2 message
+                'onsuccess' => null, // TODO: send PUBCOMP (likely)
+                'data' => [
+                    'qos' => $qos
+                ]
+            ];
         }
 
         $payload = substr($data, $bytesread);
@@ -303,13 +324,17 @@ class Client
             $identifier = mt_rand(0, 0xFFFF);
             $headers .= $identifier;
 
-            $this->publishState[$identifier] = [
-                'topic' => $topic,
-                'payload' => $payload,
-                'qos' => $qos,
-                'retain' => $retain,
-                'state' => self::PUB_STATE_PUBLISHED,
-                'last_change' => time()
+            $this->state[$identifier] = [
+                'last_change' => time(),
+                'onfail' => null, // TODO: republish
+                'onsuccess' => null, // TODO: for QoS 2, PUBREL likely
+                'data' => [
+                    'topic' => $topic,
+                    'payload' => $payload,
+                    'qos' => $qos,
+                    'retain' => $retain,
+                    'state' => self::PUB_STATE_PUBLISHED
+                ]
             ];
         }
 
@@ -373,6 +398,9 @@ class Client
         if (isset($this->options['password'])) {
             $payload .= pack('n', strlen($this->options['password'])) . $this->options['password'];
         }
+
+        // reset the state
+        $this->state = [];
 
         $this->send(self::TYPE_CONNECT, $headers, $payload);
     }
