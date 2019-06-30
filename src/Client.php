@@ -105,7 +105,7 @@ class Client
      */
     public function loop()
     {
-        $this->read();
+        while ($this->read());
         if (time() > $this->lastControlMessage + $this->keepalive) {
             // send a ping request
             $this->pingreq();
@@ -114,8 +114,10 @@ class Client
 
     /**
      * Read.
+     *
+     * Returns true when it has read data, false if not.
      */
-    protected function read()
+    protected function read() : bool
     {
         if (feof($this->socket)) {
             echo "Stream ended. Reconnecting...";
@@ -126,7 +128,7 @@ class Client
 
         if (strlen($type) == 0) {
             // no data yet
-            return NULL;
+            return false;
         }
 
         $type = unpack('C', $type)[1];
@@ -175,6 +177,8 @@ class Client
                 echo "Don't know: " . $type . "\n";
                 break;
         }
+
+        return true;
     }
 
     /**

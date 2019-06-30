@@ -43,7 +43,7 @@ while (true) {
 # TODO
 
 - [ ] Refactor retransmission
-- [ ] Read all available messages in every execution of `loop()`
+- [x] Read all available messages in every execution of `loop()`
 - [ ] Remove debugging `echo` statements (maybe implement logging)
 - [ ] Upload to packagist
 - [ ] TLS Support
