@@ -74,8 +74,6 @@ class Client
      * - last_change, the time() of the last moment it was changed
      * - onfail, a callback that will be called if the timeout expired,
      *   used to retry sending most of the time
-     * - onsuccess, a callback that will be called when the message is
-     *   successfully resolved, can be null
      * - data, all context of the state
      *
      * The key will always be the identifier of the message chain
@@ -119,7 +117,17 @@ class Client
      */
     public function loop()
     {
+        // read until there are no more messages waiting
         while ($this->read());
+
+        foreach ($this->state as $identifier => $info) {
+            if ($info['last_change'] + self::RETRANSMIT_TIME < time()) {
+                echo "ID: $identifier needs action\n";
+                $info['onfail']();
+                $this->state[$identifier]['last_change'] = time();
+            }
+        }
+
         if (time() > $this->lastControlMessage + $this->keepalive) {
             // send a ping request
             $this->pingreq();
@@ -246,8 +254,10 @@ class Client
             }
             $this->state[$identifier] = [
                 'last_change' => time(),
-                'onfail' => null, // TODO: send next qos2 message
-                'onsuccess' => null, // TODO: send PUBCOMP (likely)
+                'onfail' => function() use ($identifier) {
+                    // resend pubrec
+                    $this->send(self::TYPE_PUBREC, pack('n', $identifier), '');
+                },
                 'data' => [
                     'qos' => $qos
                 ]
@@ -326,8 +336,9 @@ class Client
 
             $this->state[$identifier] = [
                 'last_change' => time(),
-                'onfail' => null, // TODO: republish
-                'onsuccess' => null, // TODO: for QoS 2, PUBREL likely
+                'onfail' => function() use ($flags, $headers, $payload) {
+                    $this->send(self::TYPE_PUBLISH | $flags, $headers, $payload);
+                },
                 'data' => [
                     'topic' => $topic,
                     'payload' => $payload,
