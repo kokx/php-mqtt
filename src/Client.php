@@ -355,6 +355,9 @@ class Client
     public function connect()
     {
         $this->socket = fsockopen($this->options['hostname'], $this->options['port']);
+        if ($this->socket === false) {
+            throw new \RuntimeException("Could not connect to the broker.");
+        }
         // make sure the stream is not blocking
         stream_set_blocking($this->socket, false);
 
