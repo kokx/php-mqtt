@@ -1,4 +1,12 @@
-PHP-Mqtt is a client implementation for the MQTT protocol, version 3.1.1.
+A client implementation for the MQTT protocol version 3.1.1.
+
+# Installation
+
+To install, use `composer`:
+
+``` sh
+composer require kokx/mqtt
+```
 
 # Usage
 
@@ -16,7 +24,7 @@ without sudden reconnects, the keepalive time (32 seconds by default) should be
 at least 3 times the interval between calls to `loop()`. But it is recommended
 to call `loop()` more often for swift passing of messages on subscribed topics.
 
-For more complete usage instructions, look at the documentation in [`docs/usage.md`](docs/usage.md).
+For more complete usage instructions, look at the documentation in [docs/usage.md](docs/usage.md).
 
 ## Example
 
@@ -44,10 +52,10 @@ while (true) {
 
 # TODO
 
-- [x] Refactor retransmission
-- [x] Read all available messages in every execution of `loop()`
-- [x] Remove debugging `echo` statements (maybe implement logging)
-- [ ] Upload to packagist
-- [ ] Installation instructions
+- [X] Refactor retransmission
+- [X] Read all available messages in every execution of `loop()`
+- [X] Remove debugging `echo` statements (maybe implement logging)
+- [X] Upload to packagist
+- [X] Installation instructions
 - [ ] TLS Support
 - [ ] Protocol version 5 support
