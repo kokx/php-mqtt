@@ -16,6 +16,8 @@ without sudden reconnects, the keepalive time (32 seconds by default) should be
 at least 3 times the interval between calls to `loop()`. But it is recommended
 to call `loop()` more often for swift passing of messages on subscribed topics.
 
+For more complete usage instructions, look at the documentation in [`docs/usage.md`](docs/usage.md).
+
 ## Example
 
 ``` php
@@ -42,9 +44,10 @@ while (true) {
 
 # TODO
 
-- [ ] Refactor retransmission
+- [x] Refactor retransmission
 - [x] Read all available messages in every execution of `loop()`
-- [ ] Remove debugging `echo` statements (maybe implement logging)
+- [x] Remove debugging `echo` statements (maybe implement logging)
 - [ ] Upload to packagist
+- [ ] Installation instructions
 - [ ] TLS Support
 - [ ] Protocol version 5 support
