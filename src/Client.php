@@ -27,6 +27,7 @@ class Client
     const TYPE_DISCONNECT = 0xE0;
 
     const FLAG_SUBSCRIBE = 0x02;
+    const FLAG_PUBREL = 0x02;
 
     const PUB_STATE_PUBLISHED = 0;
     const PUB_STATE_PUBREL = 1;
@@ -57,12 +58,6 @@ class Client
      * @var array
      */
     protected $subscriptions = [];
-
-    /**
-     * State of received publish messages.
-     * @var array
-     */
-    protected $recvPublishState = [];
 
     /**
      * Current state of the protocol. Wiped on reconnect.
@@ -122,7 +117,6 @@ class Client
 
         foreach ($this->state as $identifier => $info) {
             if ($info['last_change'] + self::RETRANSMIT_TIME < time()) {
-                echo "ID: $identifier needs action\n";
                 $info['onfail']();
                 $this->state[$identifier]['last_change'] = time();
             }
@@ -142,7 +136,6 @@ class Client
     protected function read() : bool
     {
         if (feof($this->socket)) {
-            echo "Stream ended. Reconnecting...";
             $this->connect();
         }
         // try to read 1 byte from the socket
@@ -169,34 +162,51 @@ class Client
 
         $data = stream_get_contents($this->socket, $len);
 
-        // only get the type, don't care about flags (for now)
+        // split the type and flags
         $flags = $type & 0x0F;
         $type = $type & 0xF0;
 
         switch ($type) {
             case self::TYPE_CONNACK:
-                echo "CONNACK\n";
-                break;
             case self::TYPE_PINGREQ:
-                echo "PINGREQ\n";
-                break;
             case self::TYPE_PINGRESP:
-                echo "PINGRESP\n";
+                // nothing to do here
                 break;
             case self::TYPE_SUBACK:
-                echo "SUBACK\n";
-                var_dump(unpack('nident/cqos', $data));
+                $ident = unpack('nident', $data)['ident'];
+                unset($this->state[$ident]);
                 break;
             case self::TYPE_PUBLISH:
-                echo "PUBLISH\n";
                 $this->recvPublish($flags, $data);
                 break;
             case self::TYPE_PUBREL:
-                echo "PUBREL\n";
                 $this->recvPubrel($flags, $data);
                 break;
+            case self::TYPE_PUBACK:
+                // TODO verify qos type
+                $ident = unpack('n', $data)[1];
+                unset($this->state[$ident]);
+            case self::TYPE_PUBREC:
+                // send PUBREL
+                // TODO verify qos type
+                $ident = unpack('n', $data)[1];
+                $headers = pack('n', $ident);
+                $this->send(self::TYPE_PUBREL | self::FLAG_PUBREL, $headers, '');
+                $this->state[$ident] = [
+                    'last_change' => time(),
+                    'onfail' => function() use ($headers) {
+                        $this->send(self::TYPE_PUBREL | self::FLAG_PUBREL, $headers, '');
+                    }
+                ];
+                break;
+            case self::TYPE_PUBCOMP:
+                // finish publish qos 2
+                // TODO verify qos type
+                $ident = unpack('n', $data)[1];
+                unset($this->state[$ident]);
+                break;
             default:
-                echo "Don't know: " . $type . "\n";
+                // unknown type, just ignore for now
                 break;
         }
 
@@ -220,7 +230,6 @@ class Client
         $this->send(self::TYPE_PUBCOMP, pack('n', $identifier), '');
         // release the identifier locally
         unset($this->state[$identifier]);
-        echo "PUBCOMP sent\n";
     }
 
     /**
@@ -242,13 +251,11 @@ class Client
         }
 
         if ($qos == 1) {
-            echo "PUBACK sent\n";
             $this->send(self::TYPE_PUBACK, pack('n', $identifier), '');
         }
         if ($qos == 2) {
-            echo "PUBREC sent\n";
             $this->send(self::TYPE_PUBREC, pack('n', $identifier), '');
-            if (isset($this->recvPublishState[$identifier])) {
+            if (isset($this->state[$identifier])) {
                 // second receive, make sure we do not execute twice
                 return;
             }
@@ -267,7 +274,7 @@ class Client
         $payload = substr($data, $bytesread);
 
         // trigger callback for this message
-        foreach ($this->subscriptions as $ident => $subscription) {
+        foreach ($this->subscriptions as $subscription) {
             if ($this->topicMatches($topic, $subscription['topic'])) {
                 $subscription['callback']($topic, $payload);
             }
@@ -306,6 +313,12 @@ class Client
         $header = pack('n', $identifier);
         $payload = pack('n', strlen($topic)) . $topic . pack('c', $qos);
 
+        $this->state[$identifier] = [
+            'last_change' => time(),
+            'onfail' => function() use ($header, $payload) {
+                $this->send(self::TYPE_SUBSCRIBE | self::FLAG_SUBSCRIBE, $header, $payload);
+            }
+        ];
         $this->send(self::TYPE_SUBSCRIBE | self::FLAG_SUBSCRIBE, $header, $payload);
         $this->subscriptions[$identifier] = [
             'topic'    => $topic,
@@ -332,20 +345,13 @@ class Client
 
         if ($qos > 0) {
             $identifier = mt_rand(0, 0xFFFF);
-            $headers .= $identifier;
+            $headers .= pack('n', $identifier);
 
             $this->state[$identifier] = [
                 'last_change' => time(),
                 'onfail' => function() use ($flags, $headers, $payload) {
                     $this->send(self::TYPE_PUBLISH | $flags, $headers, $payload);
-                },
-                'data' => [
-                    'topic' => $topic,
-                    'payload' => $payload,
-                    'qos' => $qos,
-                    'retain' => $retain,
-                    'state' => self::PUB_STATE_PUBLISHED
-                ]
+                }
             ];
         }
 
